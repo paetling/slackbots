@@ -1,61 +1,38 @@
 import json
 
-from flask import Flask, request, jsonify
-import redis
+import boto3
+import botocore
 
-from settings import REDIS_HOST, USE_REDIS
+from settings import S3_BUCKET_NAME, GAINZ_FILE_NAME
 
-if USE_REDIS:
-    redis_connection = redis.Redis(host=REDIS_HOST, port=6379, db=0)
-app = Flask(__name__)
-
-gainz_storage = {}
+s3_file_object = None
 
 
-def load_storage_from_redis():
-    if not USE_REDIS:
-        return
+def get_s3_file_object():
+    global s3_file_object
+    if s3_file_object is None:
 
-    global gainz_storage
-    loaded_value = redis_connection.get('gainz_storage')
-    gainz_storage = json.loads(loaded_value)
-
-
-def save_storage_to_redis():
-    if not USE_REDIS:
-        return
-
-    global gainz_storage
-    redis_connection.set('gainz_storage', json.dumps(gainz_storage))
+        s3 = boto3.resource(
+            "s3",
+            config=botocore.config.Config(connect_timeout=5, read_timeout=1)
+        )
+        s3_file_object = s3.Object(S3_BUCKET_NAME, GAINZ_FILE_NAME)
+    return s3_file_object
 
 
-@app.route('/health')
-def health():
-    return 'YES'
+def load_gainz_external_data():
+    s3_file_object = get_s3_file_object()
+    gainz_resp = s3_file_object.get()
+    return json.loads(gainz_resp["Body"].read())
 
 
-@app.route('/', methods=['POST'])
-def give_point():
-    acting_user = '@{}'.format(request.form['user_name'])
-    command = request.form['command']
-    text = request.form['text']
-    tokenized = text.split(' ')
-
-    if command == '/gainz_give':
-        return jsonify(manage_points(acting_user, tokenized))
-    elif command == '/gainz_take':
-        return jsonify(manage_points(acting_user, tokenized, give=False))
-    elif command == '/gainz_list':
-        return jsonify(list_leaderboard())
-    elif command == '/gainz_reset':
-        return jsonify(reset())
-
-    return 'Nothing to do'
+def save_gainz_external_data(data):
+    s3_file_object = get_s3_file_object()
+    s3_file_object.put(Body=json.dumps(data))
 
 
-def reset():
-    global gainz_storage
-    gainz_storage = {}
+def clear():
+    save_gainz_external_data({})
 
     return {
         'text': 'Scoreboard Reset',
@@ -64,8 +41,8 @@ def reset():
 
 
 def list_leaderboard():
-    global gainz_storage
-    tuples = [(k, v) for k, v in gainz_storage.items()]
+    gainz_storage = load_gainz_external_data()
+    tuples = [(person, points) for person, points in gainz_storage.items() if points > 0]
     tuples.sort(key=lambda item: item[1], reverse=True)
 
     return_string = 'Scoreboard:\n'
@@ -84,9 +61,9 @@ def list_leaderboard():
 
 
 def manage_points(acting_user, tokenized_values, give=True):
-    global gainz_storage
-    number = int(tokenized_values[0])
-    users = tokenized_values[2:]
+    gainz_storage = load_gainz_external_data()
+    number = int(tokenized_values[1])
+    users = tokenized_values[3:]
     if len(users) == 0:
         return {'text': 'You must specify who to give points to'}
     elif (acting_user in users):
@@ -104,13 +81,16 @@ def manage_points(acting_user, tokenized_values, give=True):
         else:
             gainz_storage[user] -= number
 
+    save_gainz_external_data(gainz_storage)
+
     formatted_user_string = ''
     for user in users:
         formatted_user_string = '{} <{}>'.format(formatted_user_string, user)
 
     return {
-        'text': '<{}> gave {} {} to{}'.format(
+        'text': '<{}> {} {} {} to{}'.format(
             acting_user,
+            'gave' if give else 'took',
             number,
             'point' if number == 1 else 'points',
             formatted_user_string,
@@ -119,7 +99,20 @@ def manage_points(acting_user, tokenized_values, give=True):
     }
 
 
-load_storage_from_redis()
+def handle_slack_request(data, other):
+    print(data)
+    acting_user = '@{}'.format(data['user_name'])
+    command = data['command']
+    text = data['text']
+    tokenized = text.split(' ')
 
-if __name__ == "__main__":
-    app.run(port=5000)
+    if command == '/gainzbot' and 'give' in tokenized:
+        return manage_points(acting_user, tokenized)
+    elif command == '/gainzbot' and 'take' in tokenized:
+        return manage_points(acting_user, tokenized, give=False)
+    elif command == '/gainzbot' and 'list' in tokenized:
+        return list_leaderboard()
+    elif command == '/gainzbot' and 'clear' in tokenized:
+        return clear()
+
+    return 'Nothing to do'
