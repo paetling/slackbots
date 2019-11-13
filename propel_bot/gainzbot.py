@@ -72,6 +72,8 @@ def run_gainzbot(acting_user, command, text, data):
         text = list_leaderboard()
     elif 'clear' in tokenized:
         text = clear()
+    else:
+        return {"response_type": "emphemeral", "text": "WRONG!"}
 
     requests.post(data["response_url"], json={
         'text': text,
