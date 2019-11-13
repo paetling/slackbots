@@ -76,5 +76,6 @@ def run_gainzbot(acting_user, command, text, data):
     requests.post(data["response_url"], json={
         'text': text,
         "replace_original": "true",
+        "response_type": "in_channel",
     })
     return {"response_type": "emphemeral", "text": "success"}
