@@ -1,3 +1,5 @@
+from botocore.vendored import requests
+
 from utils import load_s3_data, save_s3_data
 from settings import GAINZ_FILE_NAME
 
@@ -5,10 +7,7 @@ from settings import GAINZ_FILE_NAME
 def clear():
     save_s3_data(GAINZ_FILE_NAME, {})
 
-    return {
-        'text': 'Scoreboard Reset',
-        "response_type": "in_channel",
-    }
+    return 'Scoreboard Reset'
 
 
 def list_leaderboard():
@@ -24,11 +23,7 @@ def list_leaderboard():
             item[1],
             'point' if item[1] == 1 else 'points'
         )
-
-    return {
-        'text': return_string,
-        "response_type": "in_channel"
-    }
+    return return_string
 
 
 def manage_points(acting_user, tokenized_values, give=True):
@@ -58,24 +53,28 @@ def manage_points(acting_user, tokenized_values, give=True):
     for user in users:
         formatted_user_string = '{} <{}>'.format(formatted_user_string, user)
 
-    return {
-        'text': '<{}> {} {} {} to{}'.format(
-            acting_user,
-            'gave' if give else 'took',
-            number,
-            'point' if number == 1 else 'points',
-            formatted_user_string,
-        ),
-        "response_type": "in_channel",
-    }
+    return '<{}> {} {} {} to{}'.format(
+        acting_user,
+        'gave' if give else 'took',
+        number,
+        'point' if number == 1 else 'points',
+        formatted_user_string,
+    )
 
 
-def run_gainzbot(acting_user, command, text, tokenized):
+def run_gainzbot(acting_user, command, text, data):
+    tokenized = text.split(' ')
     if 'give' in tokenized:
-        return manage_points(acting_user, tokenized)
+        text = manage_points(acting_user, tokenized)
     elif 'take' in tokenized:
-        return manage_points(acting_user, tokenized, give=False)
+        text = manage_points(acting_user, tokenized, give=False)
     elif 'list' in tokenized:
-        return list_leaderboard()
+        text = list_leaderboard()
     elif 'clear' in tokenized:
-        return clear()
+        text = clear()
+
+    requests.post(data["response_url"], json={
+        'text': text,
+        "replace_original": "true",
+    })
+    return {"response_type": "emphemeral", "text": "success"}
